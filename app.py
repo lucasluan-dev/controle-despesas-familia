@@ -66,6 +66,7 @@ def init_db(conn):
             valor REAL NOT NULL,
             data_vencimento TEXT NOT NULL,
             status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE',
+            criado_por TEXT,
             info_adicional TEXT,
             criado_em TEXT NOT NULL
         )
@@ -76,6 +77,8 @@ def init_db(conn):
     col_names = [c[1] for c in cols]
     if "status_pagamento" not in col_names:
         conn.execute("ALTER TABLE despesas ADD COLUMN status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE'")
+    if "criado_por" not in col_names:
+        conn.execute("ALTER TABLE despesas ADD COLUMN criado_por TEXT")
     conn.commit()
 
 
@@ -148,12 +151,12 @@ def calcular_status_real(data_vencimento_iso, status_informado):
     return "PENDENTE"
 
 
-def add_despesa(conn, pessoa, descricao, valor, data_vencimento, status_pagamento, info_adicional):
+def add_despesa(conn, pessoa, descricao, valor, data_vencimento, status_pagamento, info_adicional, criado_por):
     status_real = calcular_status_real(data_vencimento, status_pagamento)
     conn.execute(
         """
-        INSERT INTO despesas (pessoa, descricao, valor, data_vencimento, status_pagamento, info_adicional, criado_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO despesas (pessoa, descricao, valor, data_vencimento, status_pagamento, criado_por, info_adicional, criado_em)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             pessoa,
@@ -161,6 +164,7 @@ def add_despesa(conn, pessoa, descricao, valor, data_vencimento, status_pagament
             valor,
             data_vencimento,
             status_real,
+            criado_por,
             info_adicional,
             date.today().isoformat(),
         ),
@@ -173,17 +177,23 @@ def delete_despesa(conn, despesa_id):
     conn.commit()
 
 
-def list_despesas(conn, pessoa):
+def list_despesas(conn, pessoa, username, role):
     query = """
-        SELECT id, pessoa, descricao, valor, data_vencimento, status_pagamento, info_adicional, criado_em
+        SELECT id, pessoa, descricao, valor, data_vencimento, status_pagamento, criado_por, info_adicional, criado_em
         FROM despesas
     """
-    params = ()
+    filtros = []
+    params = []
+    if role != "ADMIN":
+        filtros.append("criado_por = ?")
+        params.append(username)
     if pessoa != "Todos":
-        query += " WHERE pessoa = ?"
-        params = (pessoa,)
+        filtros.append("pessoa = ?")
+        params.append(pessoa)
+    if filtros:
+        query += " WHERE " + " AND ".join(filtros)
     query += " ORDER BY data_vencimento ASC, id DESC"
-    return pd.read_sql_query(query, conn, params=params)
+    return pd.read_sql_query(query, conn, params=tuple(params))
 
 
 def build_aviso_vencimento(data_vencimento, status_pagamento):
@@ -223,6 +233,7 @@ def apply_theme():
     st.markdown(
         """
         <style>
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap');
             :root {
                 --bg: #061529;
                 --text: #eaf2ff;
@@ -237,6 +248,27 @@ def apply_theme():
                     radial-gradient(circle at 90% 20%, #1b4b85 0%, rgba(27,75,133,0) 30%),
                     linear-gradient(170deg, #041022 0%, var(--bg) 55%, #020a16 100%);
                 color: var(--text);
+            }
+            .session-box {
+                font-family: 'Poppins', sans-serif;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 0.65rem 0.75rem;
+                margin-bottom: 0.6rem;
+            }
+            .session-title {
+                color: #cfe1ff;
+                font-size: 0.75rem;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                margin: 0 0 0.2rem 0;
+            }
+            .session-value {
+                color: #ffffff;
+                font-size: 1rem;
+                font-weight: 600;
+                margin: 0;
             }
             .main-card {
                 background: linear-gradient(160deg, rgba(17,44,78,0.95), rgba(11,30,56,0.93));
@@ -349,8 +381,19 @@ def main():
     atualizar_ultimo_acesso(conn, username)
 
     st.sidebar.markdown("### Sessao")
-    st.sidebar.write(f"Usuario: {username}")
-    st.sidebar.write(f"Perfil: {role}")
+    st.sidebar.markdown(
+        f"""
+        <div class="session-box">
+            <p class="session-title">Usuario</p>
+            <p class="session-value">{username}</p>
+        </div>
+        <div class="session-box">
+            <p class="session-title">Perfil</p>
+            <p class="session-value">{role}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     usuarios_df = listar_usuarios(conn)
     st.sidebar.markdown("### Usuarios cadastrados")
@@ -391,7 +434,14 @@ def main():
         conn,
     )
     pessoas = pessoas_df["pessoa"].tolist()
-    pessoa_filtro = st.sidebar.selectbox("Ver despesas de:", ["Todos", *pessoas] if pessoas else ["Todos"])
+    if role == "ADMIN":
+        busca_usuario = st.sidebar.text_input("Pesquisar usuario", value="", placeholder="Digite o nome...")
+        termo = busca_usuario.strip().lower()
+        pessoas_filtradas = [p for p in pessoas if termo in p.lower()] if termo else pessoas
+        opcoes_filtro = ["Todos", *pessoas_filtradas] if pessoas_filtradas else ["Todos"]
+    else:
+        opcoes_filtro = [username]
+    pessoa_filtro = st.sidebar.selectbox("Ver despesas de:", opcoes_filtro)
 
     st.subheader("Adicionar despesa")
     with st.form("form_despesa", clear_on_submit=True):
@@ -422,11 +472,12 @@ def main():
                     data_vencimento.isoformat(),
                     status_pagamento,
                     info_adicional.strip(),
+                    username,
                 )
                 st.success("Despesa salva com sucesso.")
 
     st.subheader("Despesas cadastradas")
-    df = list_despesas(conn, pessoa_filtro)
+    df = list_despesas(conn, pessoa_filtro, username, role)
     if df.empty:
         st.info("Nenhuma despesa cadastrada ainda.")
     else:
@@ -471,9 +522,32 @@ def main():
                 st.success("Despesa excluida com sucesso.")
                 st.rerun()
 
-        st.subheader("Resumo por pessoa (barras)")
-        resumo = df.groupby("pessoa", as_index=False)["valor"].sum().sort_values("valor", ascending=False)
-        st.bar_chart(resumo.set_index("pessoa"), use_container_width=True)
+        if role == "ADMIN":
+            st.subheader("Resumo por usuario")
+            df_resumo = list_despesas(conn, "Todos", username, role)
+            df_resumo["status_real"] = df_resumo.apply(
+                lambda row: calcular_status_real(row["data_vencimento"], row["status_pagamento"]), axis=1
+            )
+            resumo_admin = (
+                df_resumo.assign(
+                    valor_pago=df_resumo.apply(lambda r: r["valor"] if r["status_real"] == "PAGO" else 0.0, axis=1),
+                    valor_pendente=df_resumo.apply(lambda r: r["valor"] if r["status_real"] == "PENDENTE" else 0.0, axis=1),
+                    valor_atrasado=df_resumo.apply(lambda r: r["valor"] if r["status_real"] == "ATRASADO" else 0.0, axis=1),
+                )
+                .groupby("pessoa", as_index=False)[["valor_pago", "valor_pendente", "valor_atrasado", "valor"]]
+                .sum()
+                .sort_values("pessoa")
+                .rename(
+                    columns={
+                        "pessoa": "usuario",
+                        "valor_pago": "pago",
+                        "valor_pendente": "pendente",
+                        "valor_atrasado": "atrasado",
+                        "valor": "total",
+                    }
+                )
+            )
+            st.dataframe(resumo_admin, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

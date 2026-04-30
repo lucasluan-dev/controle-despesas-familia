@@ -204,6 +204,11 @@ def main():
     if not check_password():
         st.stop()
 
+    st.sidebar.markdown("### Sessao")
+    if st.sidebar.button("Sair"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+
     st.markdown(
         """
         <div class="main-card">
@@ -224,11 +229,6 @@ def main():
     )
     pessoas = pessoas_df["pessoa"].tolist()
     pessoa_filtro = st.sidebar.selectbox("Ver despesas de:", ["Todos", *pessoas] if pessoas else ["Todos"])
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Sessao")
-    if st.sidebar.button("Sair"):
-        st.session_state["authenticated"] = False
-        st.rerun()
 
     st.subheader("Adicionar despesa")
     with st.form("form_despesa", clear_on_submit=True):

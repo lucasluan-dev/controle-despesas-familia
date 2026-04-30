@@ -235,7 +235,10 @@ def build_aviso_vencimento(data_vencimento, status_pagamento):
 
 
 def linha_por_status(row):
-    status = row.get("status_real", row.get("Status_Real", "PENDENTE"))
+    status = row.get(
+        "status_real",
+        row.get("Status real", row.get("Status_Real", "PENDENTE")),
+    )
 
     if status == "PAGO":
         cor = "rgba(60, 198, 138, 0.25)"

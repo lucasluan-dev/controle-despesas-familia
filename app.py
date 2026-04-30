@@ -174,9 +174,31 @@ def apply_theme():
     )
 
 
+def check_password():
+    app_password = st.secrets.get("APP_PASSWORD", "")
+    if not app_password:
+        st.error("Senha nao configurada no Streamlit. Defina APP_PASSWORD em Secrets.")
+        return False
+
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown("### Acesso da Familia")
+    senha = st.text_input("Digite a senha", type="password")
+    if st.button("Entrar"):
+        if senha == app_password:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Senha incorreta.")
+    return False
+
+
 def main():
     st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="💰", layout="wide")
     apply_theme()
+    if not check_password():
+        st.stop()
 
     st.markdown(
         """

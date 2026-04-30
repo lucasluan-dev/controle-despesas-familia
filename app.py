@@ -208,7 +208,7 @@ def list_despesas(conn, pessoa, username, role):
     if role != "ADMIN":
         filtros.append("criado_por = ?")
         params.append(username)
-    if pessoa != "Todos":
+    if role == "ADMIN" and pessoa != "Todos":
         filtros.append("pessoa = ?")
         params.append(pessoa)
     if filtros:
@@ -464,9 +464,10 @@ def main():
         termo = busca_usuario.strip().lower()
         pessoas_filtradas = [p for p in pessoas if termo in p.lower()] if termo else pessoas
         opcoes_filtro = ["Todos", *pessoas_filtradas] if pessoas_filtradas else ["Todos"]
+        pessoa_filtro = st.sidebar.selectbox("Ver despesas de:", opcoes_filtro)
     else:
-        opcoes_filtro = [username]
-    pessoa_filtro = st.sidebar.selectbox("Ver despesas de:", opcoes_filtro)
+        st.sidebar.text_input("Ver despesas de:", value=username, disabled=True)
+        pessoa_filtro = "Todos"
 
     st.subheader("Adicionar despesa")
     with st.form("form_despesa", clear_on_submit=True):
@@ -564,7 +565,7 @@ def main():
                     st.warning("Pagamento desfeito.")
                     st.rerun()
             else:
-                if c4.button("Marcar pago", key=f"pay_{int(row['id'])}", help="Confirmar pagamento", disabled=not pode_editar):
+                if c4.button("Marcar como Pago", key=f"pay_{int(row['id'])}", help="Confirmar pagamento", disabled=not pode_editar):
                     atualizar_status_pagamento(conn, int(row["id"]), "PAGO")
                     st.success("Conta marcada como paga.")
                     st.balloons()

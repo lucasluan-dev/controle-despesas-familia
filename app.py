@@ -134,6 +134,10 @@ def formatar_data_hora_pt_br(data_hora_iso):
     return f"{dt.day:02d}/{dt.month:02d}/{dt.year} {dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}"
 
 
+def formatar_moeda_br(valor):
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def usuario_esta_online(ultimo_acesso_iso):
     if not ultimo_acesso_iso:
         return False
@@ -214,7 +218,7 @@ def build_aviso_vencimento(data_vencimento, status_pagamento):
 
 
 def linha_por_status(row):
-    status = row["status_real"]
+    status = row.get("status_real", row.get("Status_Real", "PENDENTE"))
 
     if status == "PAGO":
         cor = "rgba(60, 198, 138, 0.25)"
@@ -222,7 +226,8 @@ def linha_por_status(row):
         cor = "rgba(244, 67, 54, 0.25)"
     else:
         hoje = date.today()
-        venc = date.fromisoformat(row["data_vencimento"])
+        venc_str = row.get("data_vencimento", row.get("Data_Vencimento"))
+        venc = date.fromisoformat(venc_str)
         dias = (venc - hoje).days
         cor = "rgba(255, 193, 7, 0.25)" if 0 <= dias <= 3 else ""
 
@@ -491,7 +496,7 @@ def main():
         df["criado_em_pt"] = df["criado_em"].apply(formatar_data_pt_br)
 
         total = float(df["valor"].sum())
-        st.metric("Total listado", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        st.metric("Total Listado", formatar_moeda_br(total))
 
         df_exibicao = df[
             [
@@ -507,6 +512,21 @@ def main():
                 "criado_em_pt",
             ]
         ]
+        df_exibicao["valor"] = df_exibicao["valor"].apply(formatar_moeda_br)
+        df_exibicao = df_exibicao.rename(
+            columns={
+                "id": "Id",
+                "pessoa": "Pessoa",
+                "descricao": "Descricao",
+                "valor": "Valor",
+                "data_vencimento": "Data_Vencimento",
+                "data_vencimento_pt": "Data_Vencimento_Pt",
+                "status_real": "Status_Real",
+                "aviso_vencimento": "Aviso_Vencimento",
+                "info_adicional": "Info_Adicional",
+                "criado_em_pt": "Criado_Em_Pt",
+            }
+        )
 
         st.dataframe(df_exibicao.style.apply(linha_por_status, axis=1), use_container_width=True, hide_index=True)
 
@@ -523,7 +543,7 @@ def main():
                 st.rerun()
 
         if role == "ADMIN":
-            st.subheader("Resumo por usuario")
+            st.subheader("Resumo por Usuario")
             df_resumo = list_despesas(conn, "Todos", username, role)
             df_resumo["status_real"] = df_resumo.apply(
                 lambda row: calcular_status_real(row["data_vencimento"], row["status_pagamento"]), axis=1
@@ -546,6 +566,17 @@ def main():
                         "valor": "total",
                     }
                 )
+            )
+            for col in ["pago", "pendente", "atrasado", "total"]:
+                resumo_admin[col] = resumo_admin[col].apply(formatar_moeda_br)
+            resumo_admin = resumo_admin.rename(
+                columns={
+                    "usuario": "Usuario",
+                    "pago": "Pago",
+                    "pendente": "Pendente",
+                    "atrasado": "Atrasado",
+                    "total": "Total",
+                }
             )
             st.dataframe(resumo_admin, use_container_width=True, hide_index=True)
 

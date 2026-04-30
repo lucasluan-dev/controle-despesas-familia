@@ -3,8 +3,6 @@ import html
 import json
 import sqlite3
 import tempfile
-import urllib.parse
-import urllib.request
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -22,29 +20,26 @@ AVATARES_PADRAO = {
     "Paisagem": "🏞️",
     "Montanha": "🏔️",
     "Foguete": "🚀",
-}
-
-TIMES_FUTEBOL = {
-    "Atletico Mineiro": "Clube Atletico Mineiro",
-    "Cruzeiro": "Cruzeiro Esporte Clube",
-    "Flamengo": "CR Flamengo",
-    "Corinthians": "Sport Club Corinthians Paulista",
-    "Palmeiras": "SE Palmeiras",
-    "Sao Paulo": "Sao Paulo FC",
-    "Santos": "Santos FC",
-    "Gremio": "Gremio FBPA",
-    "Internacional": "Sport Club Internacional",
-    "Vasco": "CR Vasco da Gama",
-    "Real Madrid": "Real Madrid CF",
-    "Barcelona": "FC Barcelona",
-    "Atletico de Madrid": "Atletico Madrid",
-    "Manchester United": "Manchester United F.C.",
-    "Manchester City": "Manchester City F.C.",
-    "Liverpool": "Liverpool F.C.",
-    "Chelsea": "Chelsea F.C.",
-    "Bayern de Munique": "FC Bayern Munich",
-    "PSG": "Paris Saint-Germain F.C.",
-    "Juventus": "Juventus FC",
+    "Raposa": "🦊",
+    "Lobo": "🐺",
+    "Urso": "🐻",
+    "Panda": "🐼",
+    "Coala": "🐨",
+    "Tigre": "🐯",
+    "Aguia": "🦅",
+    "Coruja": "🦉",
+    "Polvo": "🐙",
+    "Baleia": "🐳",
+    "Flor": "🌸",
+    "Sol": "☀️",
+    "Lua": "🌙",
+    "Estrela": "⭐",
+    "Arco-iris": "🌈",
+    "Raio": "⚡",
+    "Fogo": "🔥",
+    "Diamante": "💎",
+    "Trofeu": "🏆",
+    "Game": "🎮",
 }
 
 MESES_PT_BR = {
@@ -63,37 +58,6 @@ def hash_senha(senha):
 
 def agora_iso():
     return datetime.now().replace(microsecond=0).isoformat(sep=" ")
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def carregar_escudos_times_web():
-    titulos = "|".join(TIMES_FUTEBOL.values())
-    params = {
-        "action": "query",
-        "format": "json",
-        "prop": "pageimages",
-        "piprop": "thumbnail",
-        "pithumbsize": 64,
-        "titles": titulos,
-    }
-    url = "https://pt.wikipedia.org/w/api.php?" + urllib.parse.urlencode(params)
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        pages = data.get("query", {}).get("pages", {})
-        by_title = {}
-        for _, page in pages.items():
-            t = page.get("title")
-            thumb = page.get("thumbnail", {}).get("source")
-            if t and thumb:
-                by_title[t] = thumb
-        out = {}
-        for nome, titulo in TIMES_FUTEBOL.items():
-            if titulo in by_title:
-                out[nome] = by_title[titulo]
-        return out
-    except Exception:
-        return {}
 
 
 def init_db(conn):
@@ -131,16 +95,6 @@ def init_db(conn):
 
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS avatars_times (
-            nome_time TEXT PRIMARY KEY,
-            imagem_url TEXT NOT NULL,
-            atualizado_em TEXT NOT NULL
-        )
-        """
-    )
-
-    conn.execute(
-        """
         CREATE TABLE IF NOT EXISTS despesas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             pessoa TEXT NOT NULL,
@@ -165,48 +119,18 @@ def init_db(conn):
     if "criado_por" not in col_names:
         conn.execute("ALTER TABLE despesas ADD COLUMN criado_por TEXT")
     conn.commit()
-    sincronizar_escudos_times(conn)
-
-
-def sincronizar_escudos_times(conn):
-    atuais = {r[0]: r[1] for r in conn.execute("SELECT nome_time, imagem_url FROM avatars_times").fetchall()}
-    faltantes = [n for n in TIMES_FUTEBOL.keys() if n not in atuais]
-    if not faltantes:
-        return
-    web = carregar_escudos_times_web()
-    for nome in faltantes:
-        url = web.get(nome)
-        if url:
-            conn.execute(
-                "INSERT OR REPLACE INTO avatars_times (nome_time, imagem_url, atualizado_em) VALUES (?, ?, ?)",
-                (nome, url, agora_iso()),
-            )
-    conn.commit()
-
-
-def carregar_escudos_do_banco(conn):
-    return {r[0]: r[1] for r in conn.execute("SELECT nome_time, imagem_url FROM avatars_times").fetchall()}
 
 
 def montar_opcoes_avatar(role):
     opcoes = dict(AVATARES_PADRAO)
     if role == "ADMIN":
         opcoes["Coroa ADM"] = CROWN_AVATAR_VALUE
-    for nome_time in TIMES_FUTEBOL.keys():
-        opcoes[f"Time: {nome_time}"] = f"team::{nome_time}"
     return opcoes
 
 
-def avatar_para_html(avatar_ref, escudos_cache, size=18):
+def avatar_para_html(avatar_ref, size=18):
     if avatar_ref == CROWN_AVATAR_VALUE:
         return "👑"
-    if avatar_ref and avatar_ref.startswith("team::"):
-        nome_time = avatar_ref.split("::", 1)[1]
-        url = escudos_cache.get(nome_time)
-        if url:
-            nome_safe = html.escape(nome_time)
-            return f'<img src="{url}" alt="{nome_safe}" width="{size}" height="{size}" style="border-radius:50%;vertical-align:middle;">'
-        return "⚽"
     return html.escape(avatar_ref or "👤")
 
 
@@ -446,7 +370,6 @@ def main():
     apply_theme()
     conn = get_conn()
     init_db(conn)
-    escudos_cache = carregar_escudos_do_banco(conn)
 
     if not check_auth(conn):
         st.stop()
@@ -460,7 +383,7 @@ def main():
     st.sidebar.markdown("### Sessao")
     st.sidebar.markdown(
         f"""
-        <div class="session-box"><p class="session-title">Usuario</p><p class="session-value">{avatar_para_html(avatar_icone, escudos_cache)} {nome_exibicao}</p></div>
+        <div class="session-box"><p class="session-title">Usuario</p><p class="session-value">{avatar_para_html(avatar_icone)} {nome_exibicao}</p></div>
         <div class="session-box"><p class="session-title">Perfil</p><p class="session-value">{role}</p></div>
         """,
         unsafe_allow_html=True,
@@ -469,7 +392,7 @@ def main():
     usuarios_df = listar_usuarios(conn)
     st.sidebar.markdown("### Usuarios cadastrados")
     for _, urow in usuarios_df.iterrows():
-        avatar_html = avatar_para_html(urow["avatar_icone"], escudos_cache)
+        avatar_html = avatar_para_html(urow["avatar_icone"])
         st.sidebar.markdown(f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:4px;'>{avatar_html}<span>{urow['username']}</span></div>", unsafe_allow_html=True)
 
     perfil = obter_usuario(conn, username)
@@ -480,24 +403,38 @@ def main():
     tel_val = perfil[5] if perfil and perfil[5] else ""
     avatar_label = next((k for k, v in opcoes_avatar.items() if v == avatar_ref), "Anonimo")
 
-    with st.sidebar.expander("⚙️ Editar Perfil"):
+    if st.session_state.get("perfil_aberto"):
+        st.sidebar.markdown("### Editar Perfil")
         novo_nome = st.text_input("Nome", value=nome_val)
         novo_email = st.text_input("Email", value=email_val)
         novo_telefone = st.text_input("Numero", value=tel_val)
         novo_avatar_label = st.selectbox("Seu icone", list(opcoes_avatar.keys()), index=list(opcoes_avatar.keys()).index(avatar_label) if avatar_label in opcoes_avatar else 0)
-        if st.button("Salvar Perfil"):
+        if st.sidebar.button("Salvar Perfil"):
             novo_avatar = opcoes_avatar[novo_avatar_label]
             atualizar_perfil(conn, username, novo_avatar, novo_nome, novo_email, novo_telefone, role)
             st.session_state["avatar_icone"] = novo_avatar
             st.session_state["nome_exibicao"] = novo_nome.strip() if novo_nome.strip() else username
             st.success("Perfil atualizado com sucesso.")
             st.rerun()
-        if st.button("Sair"):
+        if st.sidebar.button("Fechar", key="btn_fechar_perfil"):
+            st.session_state["perfil_aberto"] = False
+            st.rerun()
+        if st.sidebar.button("Sair"):
             st.session_state["authenticated"] = False
             st.session_state["username"] = ""
             st.session_state["role"] = ""
-            st.session_state["avatar_icone"] = "👤"
+            st.session_state["avatar_icone"] = "ðŸ‘¤"
             st.session_state["nome_exibicao"] = ""
+            st.session_state["perfil_aberto"] = False
+            st.rerun()
+    else:
+        if st.sidebar.button("Sair"):
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = ""
+            st.session_state["role"] = ""
+            st.session_state["avatar_icone"] = "ðŸ‘¤"
+            st.session_state["nome_exibicao"] = ""
+            st.session_state["perfil_aberto"] = False
             st.rerun()
 
     if role == "ADMIN":
@@ -607,3 +544,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

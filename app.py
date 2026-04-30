@@ -226,7 +226,10 @@ def linha_por_status(row):
         cor = "rgba(244, 67, 54, 0.25)"
     else:
         hoje = date.today()
-        venc_str = row.get("data_vencimento", row.get("Data_Vencimento"))
+        venc_str = row.get(
+            "data_vencimento",
+            row.get("Data de vencimento", row.get("Data_Vencimento")),
+        )
         venc = date.fromisoformat(venc_str)
         dias = (venc - hoje).days
         cor = "rgba(255, 193, 7, 0.25)" if 0 <= dias <= 3 else ""

@@ -1,6 +1,10 @@
 import hashlib
+import html
+import json
 import sqlite3
 import tempfile
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -16,26 +20,28 @@ AVATARES_PADRAO = {
     "Paisagem": "🏞️",
     "Montanha": "🏔️",
     "Foguete": "🚀",
-    "Atlético Mineiro": "⚽ Atlético Mineiro",
-    "Cruzeiro": "⚽ Cruzeiro",
-    "Flamengo": "⚽ Flamengo",
-    "Corinthians": "⚽ Corinthians",
-    "Palmeiras": "⚽ Palmeiras",
-    "São Paulo": "⚽ São Paulo",
-    "Santos": "⚽ Santos",
-    "Grêmio": "⚽ Grêmio",
-    "Internacional": "⚽ Internacional",
-    "Vasco": "⚽ Vasco",
-    "Real Madrid": "⚽ Real Madrid",
-    "Barcelona": "⚽ Barcelona",
-    "Atlético de Madrid": "⚽ Atlético de Madrid",
-    "Manchester United": "⚽ Manchester United",
-    "Manchester City": "⚽ Manchester City",
-    "Liverpool": "⚽ Liverpool",
-    "Chelsea": "⚽ Chelsea",
-    "Bayern de Munique": "⚽ Bayern de Munique",
-    "PSG": "⚽ PSG",
-    "Juventus": "⚽ Juventus",
+}
+TIMES_FUTEBOL = {
+    "Atlético Mineiro": "Clube Atlético Mineiro",
+    "Cruzeiro": "Cruzeiro Esporte Clube",
+    "Flamengo": "CR Flamengo",
+    "Corinthians": "Sport Club Corinthians Paulista",
+    "Palmeiras": "SE Palmeiras",
+    "São Paulo": "São Paulo FC",
+    "Santos": "Santos FC",
+    "Grêmio": "Grêmio FBPA",
+    "Internacional": "Sport Club Internacional",
+    "Vasco": "CR Vasco da Gama",
+    "Real Madrid": "Real Madrid CF",
+    "Barcelona": "FC Barcelona",
+    "Atlético de Madrid": "Atlético Madrid",
+    "Manchester United": "Manchester United F.C.",
+    "Manchester City": "Manchester City F.C.",
+    "Liverpool": "Liverpool F.C.",
+    "Chelsea": "Chelsea F.C.",
+    "Bayern de Munique": "FC Bayern Munich",
+    "PSG": "Paris Saint-Germain F.C.",
+    "Juventus": "Juventus FC",
 }
 MESES_PT_BR = {
     1: "janeiro",
@@ -63,6 +69,56 @@ def hash_senha(senha):
 
 def agora_iso():
     return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def carregar_escudos_times():
+    titulos = "|".join(TIMES_FUTEBOL.values())
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "pageimages",
+        "piprop": "thumbnail",
+        "pithumbsize": 64,
+        "titles": titulos,
+    }
+    url = "https://pt.wikipedia.org/w/api.php?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        pages = data.get("query", {}).get("pages", {})
+        por_titulo = {}
+        for _, page in pages.items():
+            titulo = page.get("title")
+            thumb = page.get("thumbnail", {}).get("source")
+            if titulo and thumb:
+                por_titulo[titulo] = thumb
+        resultado = {}
+        for nome, titulo in TIMES_FUTEBOL.items():
+            if titulo in por_titulo:
+                resultado[nome] = por_titulo[titulo]
+        return resultado
+    except Exception:
+        return {}
+
+
+def montar_opcoes_avatar():
+    opcoes = dict(AVATARES_PADRAO)
+    for nome_time in TIMES_FUTEBOL.keys():
+        opcoes[f"Time: {nome_time}"] = f"team::{nome_time}"
+    return opcoes
+
+
+def avatar_para_html(avatar_ref, size=18):
+    if avatar_ref and avatar_ref.startswith("team::"):
+        nome_time = avatar_ref.split("::", 1)[1]
+        escudos = carregar_escudos_times()
+        url = escudos.get(nome_time)
+        if url:
+            nome_safe = html.escape(nome_time)
+            return f'<img src="{url}" alt="{nome_safe}" width="{size}" height="{size}" style="border-radius:50%;vertical-align:middle;">'
+        return "⚽"
+    return html.escape(avatar_ref or "👤")
 
 
 def init_db(conn):
@@ -415,7 +471,8 @@ def check_auth(conn):
         novo_usuario = st.text_input("Novo usuario", key="cad_usuario")
         nova_senha = st.text_input("Nova senha", type="password", key="cad_senha")
         confirmar_senha = st.text_input("Confirmar senha", type="password", key="cad_confirmar")
-        avatar_escolhido = st.selectbox("Escolha seu ícone", list(AVATARES_PADRAO.keys()), index=0, key="cad_avatar")
+        opcoes_avatar = montar_opcoes_avatar()
+        avatar_escolhido = st.selectbox("Escolha seu ícone", list(opcoes_avatar.keys()), index=0, key="cad_avatar")
         if st.button("Criar conta", key="btn_criar"):
             if len(novo_usuario.strip()) < 3:
                 st.error("Usuario deve ter pelo menos 3 caracteres.")
@@ -424,7 +481,7 @@ def check_auth(conn):
             elif nova_senha != confirmar_senha:
                 st.error("As senhas nao conferem.")
             else:
-                ok, msg = criar_usuario(conn, novo_usuario, nova_senha, AVATARES_PADRAO[avatar_escolhido])
+                ok, msg = criar_usuario(conn, novo_usuario, nova_senha, opcoes_avatar[avatar_escolhido])
                 if ok:
                     st.success(msg)
                 else:
@@ -453,7 +510,7 @@ def main():
         f"""
         <div class="session-box">
             <p class="session-title">Usuario</p>
-            <p class="session-value">{avatar_icone} {username}</p>
+            <p class="session-value">{avatar_para_html(avatar_icone)} {username}</p>
         </div>
         <div class="session-box">
             <p class="session-title">Perfil</p>
@@ -466,17 +523,22 @@ def main():
     usuarios_df = listar_usuarios(conn)
     st.sidebar.markdown("### Usuarios cadastrados")
     for _, urow in usuarios_df.iterrows():
-        st.sidebar.write(f"{urow['avatar_icone']} {urow['username']}")
+        avatar_html = avatar_para_html(urow["avatar_icone"])
+        st.sidebar.markdown(
+            f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:4px;'>{avatar_html}<span>{urow['username']}</span></div>",
+            unsafe_allow_html=True,
+        )
 
     st.sidebar.markdown("### Alterar Meu ícone")
-    avatar_atual = next((k for k, v in AVATARES_PADRAO.items() if v == avatar_icone), "Anônimo")
+    opcoes_avatar = montar_opcoes_avatar()
+    avatar_atual = next((k for k, v in opcoes_avatar.items() if v == avatar_icone), "Anônimo")
     novo_avatar_label = st.sidebar.selectbox(
         "Seu ícone",
-        list(AVATARES_PADRAO.keys()),
-        index=list(AVATARES_PADRAO.keys()).index(avatar_atual) if avatar_atual in AVATARES_PADRAO else 0,
+        list(opcoes_avatar.keys()),
+        index=list(opcoes_avatar.keys()).index(avatar_atual) if avatar_atual in opcoes_avatar else 0,
     )
     if st.sidebar.button("Salvar ícone"):
-        novo_avatar = AVATARES_PADRAO[novo_avatar_label]
+        novo_avatar = opcoes_avatar[novo_avatar_label]
         atualizar_avatar(conn, username, novo_avatar)
         st.session_state["avatar_icone"] = novo_avatar
         st.success("Ícone atualizado com sucesso.")

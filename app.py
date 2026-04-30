@@ -66,6 +66,7 @@ def init_db(conn):
             valor REAL NOT NULL,
             data_vencimento TEXT NOT NULL,
             status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE',
+            data_pagamento TEXT,
             criado_por TEXT,
             info_adicional TEXT,
             criado_em TEXT NOT NULL
@@ -77,6 +78,8 @@ def init_db(conn):
     col_names = [c[1] for c in cols]
     if "status_pagamento" not in col_names:
         conn.execute("ALTER TABLE despesas ADD COLUMN status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE'")
+    if "data_pagamento" not in col_names:
+        conn.execute("ALTER TABLE despesas ADD COLUMN data_pagamento TEXT")
     if "criado_por" not in col_names:
         conn.execute("ALTER TABLE despesas ADD COLUMN criado_por TEXT")
     conn.commit()
@@ -181,9 +184,23 @@ def delete_despesa(conn, despesa_id):
     conn.commit()
 
 
+def atualizar_status_pagamento(conn, despesa_id, novo_status):
+    if novo_status == "PAGO":
+        conn.execute(
+            "UPDATE despesas SET status_pagamento = ?, data_pagamento = ? WHERE id = ?",
+            ("PAGO", date.today().isoformat(), int(despesa_id)),
+        )
+    else:
+        conn.execute(
+            "UPDATE despesas SET status_pagamento = ?, data_pagamento = NULL WHERE id = ?",
+            ("PENDENTE", int(despesa_id)),
+        )
+    conn.commit()
+
+
 def list_despesas(conn, pessoa, username, role):
     query = """
-        SELECT id, pessoa, descricao, valor, data_vencimento, status_pagamento, criado_por, info_adicional, criado_em
+        SELECT id, pessoa, descricao, valor, data_vencimento, status_pagamento, data_pagamento, criado_por, info_adicional, criado_em
         FROM despesas
     """
     filtros = []
@@ -533,14 +550,26 @@ def main():
 
         st.dataframe(df_exibicao.style.apply(linha_por_status, axis=1), use_container_width=True, hide_index=True)
 
-        st.subheader("Acoes")
-        st.caption("Clique na lixeira para excluir uma despesa.")
+        st.subheader("Sua Atividade")
+        st.caption("Marque como pago ou exclua quando necessario.")
         for _, row in df.iterrows():
-            c1, c2, c3, c4 = st.columns([2.3, 3.3, 2, 0.7])
+            c1, c2, c3, c4, c5 = st.columns([2.2, 3.2, 1.8, 1.3, 0.7])
             c1.write(f"{row['pessoa']} - R$ {row['valor']:.2f}".replace(".", ","))
             c2.write(f"{row['descricao']} ({formatar_data_pt_br(row['data_vencimento'])})")
             c3.write(row["status_real"])
-            if c4.button("???", key=f"del_{int(row['id'])}", help="Excluir despesa"):
+            pode_editar = role == "ADMIN" or row.get("criado_por") == username
+            if row["status_real"] == "PAGO":
+                if c4.button("Desfazer", key=f"undo_{int(row['id'])}", help="Voltar para pendente", disabled=not pode_editar):
+                    atualizar_status_pagamento(conn, int(row["id"]), "PENDENTE")
+                    st.warning("Pagamento desfeito.")
+                    st.rerun()
+            else:
+                if c4.button("Marcar pago", key=f"pay_{int(row['id'])}", help="Confirmar pagamento", disabled=not pode_editar):
+                    atualizar_status_pagamento(conn, int(row["id"]), "PAGO")
+                    st.success("Conta marcada como paga.")
+                    st.balloons()
+                    st.rerun()
+            if c5.button("🗑️", key=f"del_{int(row['id'])}", help="Excluir despesa", disabled=not pode_editar):
                 delete_despesa(conn, int(row["id"]))
                 st.success("Despesa excluida com sucesso.")
                 st.rerun()

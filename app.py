@@ -1,18 +1,62 @@
+import hashlib
 import sqlite3
 import tempfile
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
 
 DB_FILE = f"{tempfile.gettempdir()}/despesas.db"
+ONLINE_WINDOW_MINUTES = 5
+MESES_PT_BR = {
+    1: "janeiro",
+    2: "fevereiro",
+    3: "marco",
+    4: "abril",
+    5: "maio",
+    6: "junho",
+    7: "julho",
+    8: "agosto",
+    9: "setembro",
+    10: "outubro",
+    11: "novembro",
+    12: "dezembro",
+}
 
 
 def get_conn():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 
+def hash_senha(senha):
+    return hashlib.sha256(senha.encode("utf-8")).hexdigest()
+
+
+def agora_iso():
+    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+
+
 def init_db(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            senha_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'USUARIO',
+            ultimo_acesso TEXT,
+            criado_em TEXT NOT NULL
+        )
+        """
+    )
+
+    cols_usuarios = conn.execute("PRAGMA table_info(usuarios)").fetchall()
+    col_names_usuarios = [c[1] for c in cols_usuarios]
+    if "role" not in col_names_usuarios:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN role TEXT NOT NULL DEFAULT 'USUARIO'")
+    if "ultimo_acesso" not in col_names_usuarios:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN ultimo_acesso TEXT")
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS despesas (
@@ -27,16 +71,85 @@ def init_db(conn):
         )
         """
     )
+
     cols = conn.execute("PRAGMA table_info(despesas)").fetchall()
     col_names = [c[1] for c in cols]
     if "status_pagamento" not in col_names:
-        conn.execute(
-            "ALTER TABLE despesas ADD COLUMN status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE'"
-        )
+        conn.execute("ALTER TABLE despesas ADD COLUMN status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE'")
     conn.commit()
 
 
+def criar_usuario(conn, username, senha):
+    username = username.strip().lower()
+    total_usuarios = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+    role = "ADMIN" if total_usuarios == 0 else "USUARIO"
+    try:
+        conn.execute(
+            "INSERT INTO usuarios (username, senha_hash, role, ultimo_acesso, criado_em) VALUES (?, ?, ?, ?, ?)",
+            (username, hash_senha(senha), role, None, date.today().isoformat()),
+        )
+        conn.commit()
+        if role == "ADMIN":
+            return True, "Usuario criado com sucesso como ADMIN."
+        return True, "Usuario criado com sucesso como USUARIO."
+    except sqlite3.IntegrityError:
+        return False, "Esse usuario ja existe."
+
+
+def atualizar_ultimo_acesso(conn, username):
+    conn.execute("UPDATE usuarios SET ultimo_acesso = ? WHERE username = ?", (agora_iso(), username))
+    conn.commit()
+
+
+def autenticar_usuario(conn, username, senha):
+    username = username.strip().lower()
+    row = conn.execute(
+        "SELECT id, username, role FROM usuarios WHERE username = ? AND senha_hash = ?",
+        (username, hash_senha(senha)),
+    ).fetchone()
+    if row:
+        atualizar_ultimo_acesso(conn, row[1])
+    return row
+
+
+def listar_usuarios(conn):
+    return pd.read_sql_query(
+        "SELECT username, role, ultimo_acesso, criado_em FROM usuarios ORDER BY username ASC",
+        conn,
+    )
+
+
+def formatar_data_pt_br(data_iso):
+    dt = date.fromisoformat(data_iso)
+    return f"{dt.day:02d} de {MESES_PT_BR[dt.month]} de {dt.year}"
+
+
+def formatar_data_hora_pt_br(data_hora_iso):
+    if not data_hora_iso:
+        return "Nunca"
+    dt = datetime.fromisoformat(data_hora_iso)
+    return f"{dt.day:02d}/{dt.month:02d}/{dt.year} {dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}"
+
+
+def usuario_esta_online(ultimo_acesso_iso):
+    if not ultimo_acesso_iso:
+        return False
+    ultimo = datetime.fromisoformat(ultimo_acesso_iso)
+    return datetime.now() - ultimo <= timedelta(minutes=ONLINE_WINDOW_MINUTES)
+
+
+def calcular_status_real(data_vencimento_iso, status_informado):
+    if status_informado == "PAGO":
+        return "PAGO"
+    hoje = date.today()
+    venc = date.fromisoformat(data_vencimento_iso)
+    if venc < hoje:
+        return "ATRASADO"
+    return "PENDENTE"
+
+
 def add_despesa(conn, pessoa, descricao, valor, data_vencimento, status_pagamento, info_adicional):
+    status_real = calcular_status_real(data_vencimento, status_pagamento)
     conn.execute(
         """
         INSERT INTO despesas (pessoa, descricao, valor, data_vencimento, status_pagamento, info_adicional, criado_em)
@@ -47,11 +160,16 @@ def add_despesa(conn, pessoa, descricao, valor, data_vencimento, status_pagament
             descricao,
             valor,
             data_vencimento,
-            status_pagamento,
+            status_real,
             info_adicional,
             date.today().isoformat(),
         ),
     )
+    conn.commit()
+
+
+def delete_despesa(conn, despesa_id):
+    conn.execute("DELETE FROM despesas WHERE id = ?", (int(despesa_id),))
     conn.commit()
 
 
@@ -86,19 +204,17 @@ def build_aviso_vencimento(data_vencimento, status_pagamento):
 
 
 def linha_por_status(row):
-    status = row["status_pagamento"]
-    hoje = date.today()
-    venc = date.fromisoformat(row["data_vencimento"])
-    dias = (venc - hoje).days
+    status = row["status_real"]
 
     if status == "PAGO":
         cor = "rgba(60, 198, 138, 0.25)"
-    elif status == "ATRASADO" or dias < 0:
+    elif status == "ATRASADO":
         cor = "rgba(244, 67, 54, 0.25)"
-    elif 0 <= dias <= 3:
-        cor = "rgba(255, 193, 7, 0.25)"
     else:
-        cor = ""
+        hoje = date.today()
+        venc = date.fromisoformat(row["data_vencimento"])
+        dias = (venc - hoje).days
+        cor = "rgba(255, 193, 7, 0.25)" if 0 <= dias <= 3 else ""
 
     return [f"background-color: {cor}" if cor else "" for _ in row]
 
@@ -146,6 +262,9 @@ def apply_theme():
                 border-radius: 14px;
                 overflow: hidden;
             }
+            div[data-testid="stMetricValue"] {
+                color: #ffffff !important;
+            }
             .stButton > button, .stForm button {
                 background: linear-gradient(120deg, var(--accent), var(--accent-2)) !important;
                 color: white !important;
@@ -175,38 +294,85 @@ def apply_theme():
     )
 
 
-def check_password():
-    try:
-        app_password = st.secrets.get("APP_PASSWORD", "")
-    except Exception:
-        app_password = ""
-    if not app_password:
-        st.error("Senha nao configurada no Streamlit. Defina APP_PASSWORD em Secrets.")
-        return False
-
+def check_auth(conn):
     if st.session_state.get("authenticated"):
         return True
 
     st.markdown("### Acesso da Familia")
-    senha = st.text_input("Digite a senha", type="password")
-    if st.button("Entrar"):
-        if senha == app_password:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Senha incorreta.")
+    aba_login, aba_cadastro = st.tabs(["Entrar", "Criar usuario"])
+
+    with aba_login:
+        usuario_login = st.text_input("Usuario", key="login_usuario")
+        senha_login = st.text_input("Senha", type="password", key="login_senha")
+        if st.button("Entrar", key="btn_entrar"):
+            user = autenticar_usuario(conn, usuario_login, senha_login)
+            if user:
+                st.session_state["authenticated"] = True
+                st.session_state["username"] = user[1]
+                st.session_state["role"] = user[2]
+                st.rerun()
+            st.error("Usuario ou senha invalidos.")
+
+    with aba_cadastro:
+        novo_usuario = st.text_input("Novo usuario", key="cad_usuario")
+        nova_senha = st.text_input("Nova senha", type="password", key="cad_senha")
+        confirmar_senha = st.text_input("Confirmar senha", type="password", key="cad_confirmar")
+        if st.button("Criar conta", key="btn_criar"):
+            if len(novo_usuario.strip()) < 3:
+                st.error("Usuario deve ter pelo menos 3 caracteres.")
+            elif len(nova_senha) < 6:
+                st.error("Senha deve ter pelo menos 6 caracteres.")
+            elif nova_senha != confirmar_senha:
+                st.error("As senhas nao conferem.")
+            else:
+                ok, msg = criar_usuario(conn, novo_usuario, nova_senha)
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+
     return False
 
 
 def main():
-    st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="💰", layout="wide")
+    st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="??", layout="wide")
     apply_theme()
-    if not check_password():
+
+    conn = get_conn()
+    init_db(conn)
+
+    if not check_auth(conn):
         st.stop()
 
+    username = st.session_state.get("username", "")
+    role = st.session_state.get("role", "USUARIO")
+    atualizar_ultimo_acesso(conn, username)
+
     st.sidebar.markdown("### Sessao")
+    st.sidebar.write(f"Usuario: {username}")
+    st.sidebar.write(f"Perfil: {role}")
+
+    usuarios_df = listar_usuarios(conn)
+    st.sidebar.markdown("### Usuarios cadastrados")
+    for nome in usuarios_df["username"].tolist():
+        st.sidebar.write(f"- {nome}")
+
+    if role == "ADMIN":
+        st.sidebar.markdown("### Status de acesso")
+        status_df = usuarios_df.copy()
+        status_df["online"] = status_df["ultimo_acesso"].apply(lambda x: "Online" if usuario_esta_online(x) else "Offline")
+        status_df["ultimo_acesso_fmt"] = status_df["ultimo_acesso"].apply(formatar_data_hora_pt_br)
+        st.sidebar.dataframe(
+            status_df[["username", "role", "online", "ultimo_acesso_fmt"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
     if st.sidebar.button("Sair"):
+        atualizar_ultimo_acesso(conn, username)
         st.session_state["authenticated"] = False
+        st.session_state["username"] = ""
+        st.session_state["role"] = ""
         st.rerun()
 
     st.markdown(
@@ -218,9 +384,6 @@ def main():
         """,
         unsafe_allow_html=True,
     )
-
-    conn = get_conn()
-    init_db(conn)
 
     st.sidebar.header("Filtro")
     pessoas_df = pd.read_sql_query(
@@ -238,8 +401,8 @@ def main():
             descricao = st.text_input("Nome da despesa")
             valor = st.number_input("Valor (R$)", min_value=0.0, step=1.0, format="%.2f")
         with col2:
-            data_vencimento = st.date_input("Data de vencimento", value=date.today())
-            status_pagamento = st.selectbox("Status", ["PENDENTE", "PAGO", "ATRASADO"], index=0)
+            data_vencimento = st.date_input("Data de vencimento", value=date.today(), format="DD/MM/YYYY")
+            status_pagamento = st.selectbox("Status", ["PENDENTE", "PAGO"], index=0)
             info_adicional = st.text_input("Informacoes adicionais")
 
         submitted = st.form_submit_button("Salvar despesa")
@@ -267,11 +430,18 @@ def main():
     if df.empty:
         st.info("Nenhuma despesa cadastrada ainda.")
     else:
-        df["aviso_vencimento"] = df.apply(
-            lambda row: build_aviso_vencimento(row["data_vencimento"], row["status_pagamento"]), axis=1
+        df["status_real"] = df.apply(
+            lambda row: calcular_status_real(row["data_vencimento"], row["status_pagamento"]), axis=1
         )
+        df["aviso_vencimento"] = df.apply(
+            lambda row: build_aviso_vencimento(row["data_vencimento"], row["status_real"]), axis=1
+        )
+        df["data_vencimento_pt"] = df["data_vencimento"].apply(formatar_data_pt_br)
+        df["criado_em_pt"] = df["criado_em"].apply(formatar_data_pt_br)
+
         total = float(df["valor"].sum())
         st.metric("Total listado", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
         df_exibicao = df[
             [
                 "id",
@@ -279,21 +449,32 @@ def main():
                 "descricao",
                 "valor",
                 "data_vencimento",
-                "status_pagamento",
+                "data_vencimento_pt",
+                "status_real",
                 "aviso_vencimento",
                 "info_adicional",
-                "criado_em",
+                "criado_em_pt",
             ]
         ]
-        st.dataframe(df_exibicao.style.apply(linha_por_status, axis=1), use_container_width=True)
 
-        st.subheader("Resumo por pessoa")
+        st.dataframe(df_exibicao.style.apply(linha_por_status, axis=1), use_container_width=True, hide_index=True)
+
+        st.subheader("Acoes")
+        st.caption("Clique na lixeira para excluir uma despesa.")
+        for _, row in df.iterrows():
+            c1, c2, c3, c4 = st.columns([2.3, 3.3, 2, 0.7])
+            c1.write(f"{row['pessoa']} - R$ {row['valor']:.2f}".replace(".", ","))
+            c2.write(f"{row['descricao']} ({formatar_data_pt_br(row['data_vencimento'])})")
+            c3.write(row["status_real"])
+            if c4.button("???", key=f"del_{int(row['id'])}", help="Excluir despesa"):
+                delete_despesa(conn, int(row["id"]))
+                st.success("Despesa excluida com sucesso.")
+                st.rerun()
+
+        st.subheader("Resumo por pessoa (barras)")
         resumo = df.groupby("pessoa", as_index=False)["valor"].sum().sort_values("valor", ascending=False)
-        st.bar_chart(resumo.set_index("pessoa"))
+        st.bar_chart(resumo.set_index("pessoa"), use_container_width=True)
 
 
 if __name__ == "__main__":
     main()
-
-
-

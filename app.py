@@ -519,12 +519,12 @@ def main():
                 "pessoa": "Pessoa",
                 "descricao": "Descricao",
                 "valor": "Valor",
-                "data_vencimento": "Data_Vencimento",
-                "data_vencimento_pt": "Data_Vencimento_Pt",
-                "status_real": "Status_Real",
-                "aviso_vencimento": "Aviso_Vencimento",
-                "info_adicional": "Info_Adicional",
-                "criado_em_pt": "Criado_Em_Pt",
+                "data_vencimento": "Data de vencimento",
+                "data_vencimento_pt": "Data de vencimento (pt)",
+                "status_real": "Status real",
+                "aviso_vencimento": "Aviso de vencimento",
+                "info_adicional": "Info adicional",
+                "criado_em_pt": "Criado em (pt)",
             }
         )
 

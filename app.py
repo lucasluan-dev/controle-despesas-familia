@@ -175,7 +175,10 @@ def apply_theme():
 
 
 def check_password():
-    app_password = st.secrets.get("APP_PASSWORD", "")
+    try:
+        app_password = st.secrets.get("APP_PASSWORD", "")
+    except Exception:
+        app_password = ""
     if not app_password:
         st.error("Senha nao configurada no Streamlit. Defina APP_PASSWORD em Secrets.")
         return False

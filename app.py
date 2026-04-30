@@ -1,10 +1,11 @@
-﻿import sqlite3
+import sqlite3
+import tempfile
 from datetime import date
 
 import pandas as pd
 import streamlit as st
 
-DB_FILE = "despesas.db"
+DB_FILE = f"{tempfile.gettempdir()}/despesas.db"
 
 
 def get_conn():
@@ -198,7 +199,7 @@ def check_password():
 
 
 def main():
-    st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="💰", layout="wide")
+    st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="??", layout="wide")
     apply_theme()
     if not check_password():
         st.stop()
@@ -288,3 +289,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

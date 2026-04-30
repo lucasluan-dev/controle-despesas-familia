@@ -249,7 +249,7 @@ def linha_por_status(row):
         )
         venc = date.fromisoformat(venc_str)
         dias = (venc - hoje).days
-        cor = "rgba(255, 193, 7, 0.25)" if 0 <= dias <= 3 else ""
+        cor = "rgba(255, 193, 7, 0.25)" if dias == 0 else ""
 
     return [f"background-color: {cor}" if cor else "" for _ in row]
 

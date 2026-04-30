@@ -199,10 +199,15 @@ def check_password():
 
 
 def main():
-    st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="??", layout="wide")
+    st.set_page_config(page_title="Controle de Despesas da Familia", page_icon="💰", layout="wide")
     apply_theme()
     if not check_password():
         st.stop()
+
+    st.sidebar.markdown("### Sessao")
+    if st.sidebar.button("Sair"):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
     st.markdown(
         """

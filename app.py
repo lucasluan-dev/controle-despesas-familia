@@ -8,6 +8,35 @@ import streamlit as st
 
 DB_FILE = f"{tempfile.gettempdir()}/despesas.db"
 ONLINE_WINDOW_MINUTES = 5
+AVATARES_PADRAO = {
+    "Anônimo": "👤",
+    "Gato": "🐱",
+    "Cachorro": "🐶",
+    "Leão": "🦁",
+    "Paisagem": "🏞️",
+    "Montanha": "🏔️",
+    "Foguete": "🚀",
+    "Atlético Mineiro": "⚽ Atlético Mineiro",
+    "Cruzeiro": "⚽ Cruzeiro",
+    "Flamengo": "⚽ Flamengo",
+    "Corinthians": "⚽ Corinthians",
+    "Palmeiras": "⚽ Palmeiras",
+    "São Paulo": "⚽ São Paulo",
+    "Santos": "⚽ Santos",
+    "Grêmio": "⚽ Grêmio",
+    "Internacional": "⚽ Internacional",
+    "Vasco": "⚽ Vasco",
+    "Real Madrid": "⚽ Real Madrid",
+    "Barcelona": "⚽ Barcelona",
+    "Atlético de Madrid": "⚽ Atlético de Madrid",
+    "Manchester United": "⚽ Manchester United",
+    "Manchester City": "⚽ Manchester City",
+    "Liverpool": "⚽ Liverpool",
+    "Chelsea": "⚽ Chelsea",
+    "Bayern de Munique": "⚽ Bayern de Munique",
+    "PSG": "⚽ PSG",
+    "Juventus": "⚽ Juventus",
+}
 MESES_PT_BR = {
     1: "janeiro",
     2: "fevereiro",
@@ -44,6 +73,7 @@ def init_db(conn):
             username TEXT NOT NULL UNIQUE,
             senha_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'USUARIO',
+            avatar_icone TEXT NOT NULL DEFAULT '👤',
             ultimo_acesso TEXT,
             criado_em TEXT NOT NULL
         )
@@ -54,6 +84,8 @@ def init_db(conn):
     col_names_usuarios = [c[1] for c in cols_usuarios]
     if "role" not in col_names_usuarios:
         conn.execute("ALTER TABLE usuarios ADD COLUMN role TEXT NOT NULL DEFAULT 'USUARIO'")
+    if "avatar_icone" not in col_names_usuarios:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN avatar_icone TEXT NOT NULL DEFAULT '👤'")
     if "ultimo_acesso" not in col_names_usuarios:
         conn.execute("ALTER TABLE usuarios ADD COLUMN ultimo_acesso TEXT")
 
@@ -85,14 +117,14 @@ def init_db(conn):
     conn.commit()
 
 
-def criar_usuario(conn, username, senha):
+def criar_usuario(conn, username, senha, avatar_icone):
     username = username.strip().lower()
     total_usuarios = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
     role = "ADMIN" if total_usuarios == 0 else "USUARIO"
     try:
         conn.execute(
-            "INSERT INTO usuarios (username, senha_hash, role, ultimo_acesso, criado_em) VALUES (?, ?, ?, ?, ?)",
-            (username, hash_senha(senha), role, None, date.today().isoformat()),
+            "INSERT INTO usuarios (username, senha_hash, role, avatar_icone, ultimo_acesso, criado_em) VALUES (?, ?, ?, ?, ?, ?)",
+            (username, hash_senha(senha), role, avatar_icone, None, date.today().isoformat()),
         )
         conn.commit()
         if role == "ADMIN":
@@ -107,10 +139,15 @@ def atualizar_ultimo_acesso(conn, username):
     conn.commit()
 
 
+def atualizar_avatar(conn, username, avatar_icone):
+    conn.execute("UPDATE usuarios SET avatar_icone = ? WHERE username = ?", (avatar_icone, username))
+    conn.commit()
+
+
 def autenticar_usuario(conn, username, senha):
     username = username.strip().lower()
     row = conn.execute(
-        "SELECT id, username, role FROM usuarios WHERE username = ? AND senha_hash = ?",
+        "SELECT id, username, role, avatar_icone FROM usuarios WHERE username = ? AND senha_hash = ?",
         (username, hash_senha(senha)),
     ).fetchone()
     if row:
@@ -120,7 +157,7 @@ def autenticar_usuario(conn, username, senha):
 
 def listar_usuarios(conn):
     return pd.read_sql_query(
-        "SELECT username, role, ultimo_acesso, criado_em FROM usuarios ORDER BY username ASC",
+        "SELECT username, role, avatar_icone, ultimo_acesso, criado_em FROM usuarios ORDER BY username ASC",
         conn,
     )
 
@@ -370,6 +407,7 @@ def check_auth(conn):
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = user[1]
                 st.session_state["role"] = user[2]
+                st.session_state["avatar_icone"] = user[3]
                 st.rerun()
             st.error("Usuario ou senha invalidos.")
 
@@ -377,6 +415,7 @@ def check_auth(conn):
         novo_usuario = st.text_input("Novo usuario", key="cad_usuario")
         nova_senha = st.text_input("Nova senha", type="password", key="cad_senha")
         confirmar_senha = st.text_input("Confirmar senha", type="password", key="cad_confirmar")
+        avatar_escolhido = st.selectbox("Escolha seu ícone", list(AVATARES_PADRAO.keys()), index=0, key="cad_avatar")
         if st.button("Criar conta", key="btn_criar"):
             if len(novo_usuario.strip()) < 3:
                 st.error("Usuario deve ter pelo menos 3 caracteres.")
@@ -385,7 +424,7 @@ def check_auth(conn):
             elif nova_senha != confirmar_senha:
                 st.error("As senhas nao conferem.")
             else:
-                ok, msg = criar_usuario(conn, novo_usuario, nova_senha)
+                ok, msg = criar_usuario(conn, novo_usuario, nova_senha, AVATARES_PADRAO[avatar_escolhido])
                 if ok:
                     st.success(msg)
                 else:
@@ -406,6 +445,7 @@ def main():
 
     username = st.session_state.get("username", "")
     role = st.session_state.get("role", "USUARIO")
+    avatar_icone = st.session_state.get("avatar_icone", "👤")
     atualizar_ultimo_acesso(conn, username)
 
     st.sidebar.markdown("### Sessao")
@@ -413,7 +453,7 @@ def main():
         f"""
         <div class="session-box">
             <p class="session-title">Usuario</p>
-            <p class="session-value">{username}</p>
+            <p class="session-value">{avatar_icone} {username}</p>
         </div>
         <div class="session-box">
             <p class="session-title">Perfil</p>
@@ -425,8 +465,22 @@ def main():
 
     usuarios_df = listar_usuarios(conn)
     st.sidebar.markdown("### Usuarios cadastrados")
-    for nome in usuarios_df["username"].tolist():
-        st.sidebar.write(f"- {nome}")
+    for _, urow in usuarios_df.iterrows():
+        st.sidebar.write(f"{urow['avatar_icone']} {urow['username']}")
+
+    st.sidebar.markdown("### Alterar Meu ícone")
+    avatar_atual = next((k for k, v in AVATARES_PADRAO.items() if v == avatar_icone), "Anônimo")
+    novo_avatar_label = st.sidebar.selectbox(
+        "Seu ícone",
+        list(AVATARES_PADRAO.keys()),
+        index=list(AVATARES_PADRAO.keys()).index(avatar_atual) if avatar_atual in AVATARES_PADRAO else 0,
+    )
+    if st.sidebar.button("Salvar ícone"):
+        novo_avatar = AVATARES_PADRAO[novo_avatar_label]
+        atualizar_avatar(conn, username, novo_avatar)
+        st.session_state["avatar_icone"] = novo_avatar
+        st.success("Ícone atualizado com sucesso.")
+        st.rerun()
 
     if role == "ADMIN":
         st.sidebar.markdown("### Status de acesso")
